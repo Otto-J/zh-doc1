@@ -1,0 +1,92 @@
+name: Translation Workflow
+
+on:
+  workflow_dispatch: # 允许手动触发
+
+  # schedule:
+  #   - cron: "0 0 * * 0" # 每周运行一次(周日0点)
+
+jobs:
+  sync-source:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: raw
+          fetch-depth: 0
+
+      - name: Checkout source repo
+        uses: actions/checkout@v3
+        with:
+          repository: "nuxt/nuxt" # 替换为原始仓库地址
+          path: "source"
+
+      - name: Detect changed files
+        id: changed_files
+        run: |
+          changed=$(git diff --name-only -- ':(exclude)docs' 'source')
+          printf "::set-output name=files::%s" "$changed"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: changed-files
+          path: ${{ steps.changed_files.outputs.files }}
+
+  translate:
+    needs: sync-source
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: changed-files
+
+      - name: Translate files
+        env:
+          GOOGLE_TRANSLATE_API_KEY: ${{ secrets.GOOGLE_TRANSLATE_API_KEY }}
+        run: |
+          files=${{ steps.artifact.outputs.name }}
+          # 使用 Google Translate API 翻译文件
+          # ...
+
+      - name: Commit translated files
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add docs/
+          git commit -m "Translated files"
+          git push origin docs
+
+      - name: Open Pull Request
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: translate-updates
+          title: "Translation Updates"
+          body: |
+            Updated translations for:
+            ${{ steps.changed_files.outputs.files }}
+
+  merge-translations:
+    needs: translate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Enable Automerge
+        uses: peter-evans/enable-pull-request-automerge@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ github.event.pull_request.number }}
+
+      - name: Automerge Translations
+        uses: pascalgn/automerge-action@v0.15.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_LABELS: ""
+          MERGE_METHOD: "squash"
+          MERGE_COMMIT_MESSAGE: "pull-request-title"
